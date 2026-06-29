@@ -12,6 +12,7 @@
   --warn: #d29922;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --left-width: 280px;
 }
 
 * { box-sizing: border-box; }
@@ -53,12 +54,36 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 
 .app {
   display: grid;
-  grid-template-columns: 280px 1fr 320px;
+  grid-template-columns: var(--left-width) 6px 1fr 320px;
   grid-template-rows: 48px 1fr;
   grid-template-areas:
-    "header header header"
-    "left   main   right";
+    "header header header header"
+    "left   handle main   right";
   height: 100vh;
+}
+.resize-handle {
+  grid-area: handle;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+  transform: translateX(-0.5px);
+  transition: background 0.15s ease;
+}
+.resize-handle:hover::after,
+.resize-handle.dragging::after {
+  background: var(--accent);
+  width: 2px;
+  transform: translateX(-1px);
 }
 .header {
   grid-area: header;
@@ -198,7 +223,12 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   font-size: 12.5px;
   border: 1px solid transparent;
 }
-.repo-list li.active { background: var(--bg-elev2); border-color: var(--border); }
+.repo-list li.active {
+  background: var(--bg-elev2);
+  border-color: var(--accent);
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
 .repo-list .repo-meta {
   font-size: 11px;
   color: var(--fg-muted);
