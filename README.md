@@ -108,7 +108,15 @@ What stays the same: schema, query logic, prompt, citation format, eval harness.
 
 ## What I would do with more time
 
-In priority order: (1) cross-encoder reranker (Cohere/Jina/local BGE) on top 50 RRF → top 8, expected +10-15 recall. (2) More tree-sitter grammars (Go, Rust, Java). (3) Top-level arrow function detection. (4) Incremental ingest via chokidar. (5) Eval trend UI. (6) MCP server exposing `ask_codebase(question)` so Claude Code can query an indexed repo. (7) Voice input.
+In priority order:
+
+1. **Cross-encoder reranker** (Cohere, Jina, or local BGE) on top 50 RRF results, then top 8 to the LLM. Expected +10-15 points recall.
+2. **More tree-sitter grammars** (Go, Rust, Java, Ruby, C#, PHP). One file each.
+3. **Top-level arrow function detection** in the TS chunker. 20-line patch.
+4. **Incremental ingest** via chokidar file watcher. Re-chunk on change.
+5. **Eval trend UI**. Plot recall@5 and cite rate over time. Data is already in the DB.
+6. **MCP server** exposing `ask_codebase(question)` so Claude Code can query an indexed repo. Most leveraged thing on this list for an FDE role.
+7. **Voice input** via Monologue (Mac) or Apple dictation. Pipe to the chat composer.
 
 ## What I cut and why
 
