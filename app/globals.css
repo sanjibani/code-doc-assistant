@@ -55,13 +55,15 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 
 .app {
   display: grid;
-  grid-template-columns: var(--left-width) 1fr var(--right-width);
+  grid-template-columns: var(--left-width) minmax(0, 1fr) 10px var(--right-width);
   grid-template-rows: 48px 1fr;
   grid-template-areas:
-    "header header header"
-    "left   main   right";
+    "header header header   header"
+    "left   main   rhandle  right";
   height: 100vh;
+  min-width: 0;
 }
+.main { min-width: 0; }
 .toggle-panel {
   font-size: 12px;
   padding: 4px 10px;
@@ -74,6 +76,52 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .toggle-panel.primary:hover {
   background: var(--accent);
   border-color: var(--accent);
+}
+.resize-handle {
+  grid-area: rhandle;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+.resize-handle .handle-grip {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  letter-spacing: -2px;
+  padding: 16px 1px;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border-radius: 3px;
+  transition: color 0.15s ease, background 0.15s ease;
+  user-select: none;
+  pointer-events: none;
+}
+.resize-handle:hover::before,
+.resize-handle.dragging::before {
+  background: var(--accent);
+}
+.resize-handle:hover .handle-grip,
+.resize-handle.dragging .handle-grip {
+  color: var(--accent);
+  background: var(--bg);
+}
+.resize-handle.hidden {
+  display: none;
 }
 .header {
   grid-area: header;

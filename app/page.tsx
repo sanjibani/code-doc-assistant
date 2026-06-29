@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Chat from "./components/Chat";
 import ArchitectureMap from "./components/ArchitectureMap";
 import EvalRunner from "./components/EvalRunner";
@@ -11,22 +11,26 @@ type Repo = { id: string; name: string; url: string; file_count: number; chunk_c
 
 const LEFT_COLLAPSED = 280;
 const LEFT_EXPANDED = 560;
-const RIGHT_COLLAPSED = 320;
-const RIGHT_EXPANDED = 900;
+const RIGHT_DEFAULT = 360;
+const RIGHT_MIN = 200;
+const RIGHT_MAX = 1400;
 const LS_LEFT = "code-doc.leftMode";
-const LS_RIGHT = "code-doc.rightMode";
+const LS_RIGHT = "code-doc.rightWidth";
 
 export default function HomePage() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [activeRepoId, setActiveRepoId] = useState<string | null>(null);
   const [ingesting, setIngesting] = useState(false);
   const [leftExpanded, setLeftExpanded] = useState(false);
-  const [rightExpanded, setRightExpanded] = useState(false);
+  const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
+  const [dragging, setDragging] = useState<"left" | "right" | null>(null);
+  const dragRef = useRef<{ which: "left" | "right"; startX: number; startW: number } | null>(null);
 
-  // Load saved expand states on mount.
+  // Load saved sizes on mount.
   useEffect(() => {
     setLeftExpanded(localStorage.getItem(LS_LEFT) === "1");
-    setRightExpanded(localStorage.getItem(LS_RIGHT) === "1");
+    const rw = Number(localStorage.getItem(LS_RIGHT));
+    if (Number.isFinite(rw) && rw >= 0 && rw <= RIGHT_MAX) setRightWidth(rw);
   }, []);
 
   // Persist + drive CSS variables.
@@ -37,10 +41,40 @@ export default function HomePage() {
   }, [leftExpanded]);
 
   useEffect(() => {
-    const rw = rightExpanded ? RIGHT_EXPANDED : RIGHT_COLLAPSED;
-    document.documentElement.style.setProperty("--right-width", `${rw}px`);
-    localStorage.setItem(LS_RIGHT, rightExpanded ? "1" : "0");
-  }, [rightExpanded]);
+    document.documentElement.style.setProperty("--right-width", `${Math.round(rightWidth)}px`);
+    localStorage.setItem(LS_RIGHT, String(Math.round(rightWidth)));
+  }, [rightWidth]);
+
+  // Global mouse listeners while dragging either handle.
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const dx = e.clientX - dragRef.current.startX;
+      if (dragRef.current.which === "right") {
+        // Drag handle is on the LEFT edge of the right panel.
+        // Moving right makes panel wider, moving left makes it narrower.
+        const next = Math.max(0, Math.min(RIGHT_MAX, dragRef.current.startW + dx));
+        setRightWidth(next);
+      }
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      setDragging(null);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging]);
+
+  const onRightHandleDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { which: "right", startX: e.clientX, startW: rightWidth };
+    setDragging("right");
+  };
 
   useEffect(() => {
     fetch("/api/ingest")
@@ -52,8 +86,11 @@ export default function HomePage() {
       .catch(() => {});
   }, []);
 
+  const rightCollapsed = rightWidth < 50;
+  const toggleRight = () => setRightWidth(rightCollapsed ? RIGHT_DEFAULT : 0);
+
   return (
-    <div className="app">
+    <div className="app" style={{ userSelect: dragging ? "none" : "auto" }}>
       <header className="header">
         <h1>Code Doc Assistant</h1>
         <span className="badge">v0.1</span>
@@ -66,11 +103,11 @@ export default function HomePage() {
           {leftExpanded ? "« Sidebar" : "» Sidebar"}
         </button>
         <button
-          className="toggle-panel primary"
-          onClick={() => setRightExpanded((e) => !e)}
-          title={rightExpanded ? "Collapse architecture panel" : "Expand architecture panel"}
+          className={`toggle-panel${rightCollapsed ? "" : " primary"}`}
+          onClick={toggleRight}
+          title={rightCollapsed ? "Expand architecture panel" : "Collapse architecture panel"}
         >
-          {rightExpanded ? "Architecture «" : "Architecture »"}
+          {rightCollapsed ? "Architecture »" : "Architecture «"}
         </button>
         <span className="muted">
           <span className="kbd">/</span> to focus search
@@ -113,7 +150,14 @@ export default function HomePage() {
       <main className="main">
         <Chat activeRepoId={activeRepoId} />
       </main>
-      <aside className="right">
+      <div
+        className={`resize-handle right${dragging === "right" ? " dragging" : ""}${rightCollapsed ? " hidden" : ""}`}
+        onMouseDown={onRightHandleDown}
+        title="Drag to resize"
+      >
+        <span className="handle-grip">⋮</span>
+      </div>
+      <aside className="right" style={{ display: rightCollapsed ? "none" : undefined }}>
         <h3 className="section-title">Architecture</h3>
         <ArchitectureMap activeRepoId={activeRepoId} />
       </aside>

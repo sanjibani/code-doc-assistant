@@ -25,87 +25,45 @@ interface PositionedNode {
   y: number;
 }
 
-// Layout canvas is intentionally much bigger than the panel.
-// fitView zooms out to whatever bounds we give it. Bigger layout
-// canvas = nodes spaced further apart = labels don't overlap after zoom.
-const LAYOUT_W = 2400;
-const LAYOUT_H = 1600;
-const MIN_DIST = 220;       // nodes repel each other below this distance
-const EDGE_LEN = 280;       // attractive force pulls edges to this length
-const ITERATIONS = 320;
+// Layout uses a deterministic grid + ring scheme sized to the container.
+// Nodes never leave this box, so fitView can always find the bounds.
+function layout(data: GraphData, containerW: number, containerH: number): PositionedNode[] {
+  const cx = containerW / 2;
+  const cy = containerH / 2;
+  const w = Math.max(containerW, 400);
+  const h = Math.max(containerH, 400);
 
-// Deterministic-ish PRNG so layout doesn't reshuffle on every render.
-function seeded(seed: number) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 0xffffffff;
-  };
-}
-
-function forceLayout(data: GraphData): PositionedNode[] {
-  const out: PositionedNode[] = data.nodes.map((n) => ({
-    ...n,
-    x: LAYOUT_W / 2,
-    y: LAYOUT_H / 2,
-  }));
+  const out: PositionedNode[] = data.nodes.map((n) => ({ ...n, x: cx, y: cy }));
   const byId = new Map(out.map((n) => [n.id, n]));
-
-  // Seed positions: internals in a tight cluster at center, externals spread out.
-  const rand = seeded(42);
   const internals = out.filter((n) => n.kind === "internal");
   const externals = out.filter((n) => n.kind === "external");
+
+  // Grid: 3 cols x ceil(N/3) rows, centered around (cx, cy).
+  const cols = 3;
+  const colW = 130;
+  const rowH = 36;
+  const rows = Math.ceil(internals.length / cols);
+  const gridW = cols * colW;
+  const gridH = rows * rowH;
+  const gx0 = cx - gridW / 2 + colW / 2;
+  const gy0 = cy - gridH / 2 + rowH / 2;
+  // Sort internals by out_degree desc so the hub files (sandbox.py etc.) sit on top.
+  internals.sort((a, b) => b.out_degree - a.out_degree);
   internals.forEach((n, i) => {
-    n.x = LAYOUT_W / 2 + Math.cos((i / internals.length) * Math.PI * 2) * 80;
-    n.y = LAYOUT_H / 2 + Math.sin((i / internals.length) * Math.PI * 2) * 80;
-  });
-  externals.forEach((n, i) => {
-    n.x = LAYOUT_W / 2 + Math.cos((i / externals.length) * Math.PI * 2) * 500;
-    n.y = LAYOUT_H / 2 + Math.sin((i / externals.length) * Math.PI * 2) * 500 + (rand() - 0.5) * 30;
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    n.x = gx0 + c * colW;
+    n.y = gy0 + r * rowH;
   });
 
-  // Verlet-ish relaxation.
-  for (let iter = 0; iter < ITERATIONS; iter++) {
-    // Repulsion between every pair (O(n^2) but n is small).
-    for (let i = 0; i < out.length; i++) {
-      for (let j = i + 1; j < out.length; j++) {
-        const a = out[i]!;
-        const b = out[j]!;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.hypot(dx, dy) || 0.01;
-        const force = (MIN_DIST - d) * 0.5;
-        if (force <= 0) continue;
-        const fx = (dx / d) * force;
-        const fy = (dy / d) * force;
-        a.x -= fx;
-        a.y -= fy;
-        b.x += fx;
-        b.y += fy;
-      }
-    }
-    // Attraction along edges (spring toward EDGE_LEN).
-    for (const e of data.edges) {
-      const a = byId.get(e.from);
-      const b = byId.get(e.to);
-      if (!a || !b) continue;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.hypot(dx, dy) || 0.01;
-      const force = (d - EDGE_LEN) * 0.04;
-      const fx = (dx / d) * force;
-      const fy = (dy / d) * force;
-      a.x += fx;
-      a.y += fy;
-      b.x -= fx;
-      b.y -= fy;
-    }
-    // Gentle pull toward center so disconnected nodes don't drift off.
-    for (const n of out) {
-      n.x += (LAYOUT_W / 2 - n.x) * 0.002;
-      n.y += (LAYOUT_H / 2 - n.y) * 0.002;
-    }
-  }
+  // Ring around the grid for externals. Bigger radius if more externals.
+  const ringR = Math.min(w, h) * 0.42;
+  externals.sort((a, b) => b.in_degree - a.in_degree);
+  externals.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(externals.length, 1) - Math.PI / 2;
+    n.x = cx + Math.cos(angle) * ringR;
+    n.y = cy + Math.sin(angle) * ringR;
+  });
 
   return out;
 }
@@ -121,6 +79,7 @@ export default function ArchitectureMap(props: { activeRepoId: string | null }) 
 function ArchitectureMapInner({ activeRepoId }: { activeRepoId: string | null }) {
   const [data, setData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [size, setSize] = useState({ w: 400, h: 600 });
   const containerRef = useRef<HTMLDivElement>(null);
   const { fitView } = useReactFlow();
 
@@ -137,21 +96,34 @@ function ArchitectureMapInner({ activeRepoId }: { activeRepoId: string | null })
       .finally(() => setLoading(false));
   }, [activeRepoId]);
 
-  // Re-fit whenever data loads. Layout uses a fixed-size canvas, so
-  // panel resize doesn't change node positions.
+  // Track container size so layout + fitView use real dimensions.
   useEffect(() => {
-    if (!data) return;
-    const t = setTimeout(() => fitView({ duration: 300, padding: 0.15 }), 100);
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const apply = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setSize({ w: r.width, h: r.height });
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Re-fit whenever data or container size changes.
+  useEffect(() => {
+    if (!data || size.w < 50 || size.h < 50) return;
+    const t = setTimeout(() => fitView({ duration: 250, padding: 0.18 }), 60);
     return () => clearTimeout(t);
-  }, [data, fitView]);
+  }, [data, size.w, size.h, fitView]);
 
   const { nodes, edges } = useMemo(() => {
     if (!data) return { nodes: [] as Node[], edges: [] as Edge[] };
-    const positioned = forceLayout(data);
+    const positioned = layout(data, size.w, size.h);
+    const byId = new Map(positioned.map((n) => [n.id, n]));
     const nodes: Node[] = positioned.map((n) => ({
       id: n.id,
       position: { x: n.x, y: n.y },
-      // Short label (no degree suffix). Title attr shows full info on hover.
       data: { label: n.label },
       title: `${n.label}\nin: ${n.in_degree}  out: ${n.out_degree}  ${n.kind}`,
       style: {
@@ -166,17 +138,34 @@ function ArchitectureMapInner({ activeRepoId }: { activeRepoId: string | null })
         width: "auto",
         whiteSpace: "nowrap",
         boxShadow: n.kind === "internal" ? "0 0 0 1px rgba(88,166,255,0.15)" : "none",
+        zIndex: 10,
       },
     }));
-    const edges: Edge[] = data.edges.slice(0, 300).map((e, i) => ({
+    // Prefer internal edges over external noise.
+    const scored = data.edges
+      .map((e) => {
+        const a = byId.get(e.from);
+        const b = byId.get(e.to);
+        const both =
+          a?.kind === "internal" && b?.kind === "internal"
+            ? 3
+            : a?.kind === "internal" || b?.kind === "internal"
+              ? 2
+              : 1;
+        return { e, score: both };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 80);
+    const edges: Edge[] = scored.map(({ e }, i) => ({
       id: `${i}-${e.from}->${e.to}`,
       source: e.from,
       target: e.to,
-      style: { stroke: "var(--border)", strokeWidth: 1, opacity: 0.7 },
-      type: "default",
+      type: "smoothstep",
+      style: { stroke: "var(--border)", strokeWidth: 0.6, opacity: 0.28 },
+      pathOptions: { borderRadius: 4 },
     }));
     return { nodes, edges };
-  }, [data]);
+  }, [data, size.w, size.h]);
 
   if (!activeRepoId) return <div className="muted">Ingest a repo to see its dependency graph.</div>;
   if (loading) return <div className="muted">Loading graph...</div>;
@@ -194,7 +183,6 @@ function ArchitectureMapInner({ activeRepoId }: { activeRepoId: string | null })
         panOnDrag={true}
         zoomOnScroll={true}
         zoomOnPinch={true}
-        fitView
       >
         <Background gap={20} size={1} color="rgba(139, 148, 158, 0.15)" />
         <Controls />
