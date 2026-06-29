@@ -2,7 +2,7 @@
 
 Ask questions about an indexed codebase. Get cited answers with file and line references.
 
-This is my submission for the AI Forward Deployed Engineer take-home. Option 2 from the assignment: a Code Documentation Assistant. Built overnight in one sitting, per the brief's invitation to scope tight.
+This is my submission for the AI Forward Deployed Engineer take-home, Option 2. Built in one overnight session.
 
 ## Setup
 
@@ -10,448 +10,121 @@ This is my submission for the AI Forward Deployed Engineer take-home. Option 2 f
 pnpm install
 cp .env.example .env
 # edit .env, set MINIMAX_API_KEY
-pnpm dev              # web UI on localhost:3000
-pnpm ingest /path/to/some-repo    # index a repo from the CLI
-pnpm eval                          # run 25-question regression suite
+pnpm dev                            # http://localhost:3000
+pnpm ingest /path/to/some-repo     # index a repo
+pnpm eval                           # 25-question regression suite
 ```
 
-Requires Node 20+, pnpm 10+, and a MiniMax API key for embeddings and chat.
+Requires Node 20+, pnpm 10+, a MiniMax API key.
 
 ## What it does
 
-You point it at a repository. It walks the tree, chunks every TypeScript and Python file along AST boundaries (function, class, method, interface), embeds the chunks with MiniMax, and stores them in SQLite with both a vector index (sqlite-vec) and a keyword index (FTS5). Then you ask questions in a chat UI. The system retrieves the top chunks via hybrid search, asks the LLM to answer using only those chunks, and forces every claim to carry an inline citation like `[src: src/server/router.ts#L42-L67]`. Click a citation and you jump to the file.
+You point it at a repository. It walks the tree, chunks every TypeScript and Python file along AST boundaries (function, class, method, interface), embeds the chunks with MiniMax, and stores them in SQLite with a vector index (sqlite-vec) and a keyword index (FTS5). You ask questions in a chat UI. The system retrieves the top chunks via hybrid BM25 + vector search, asks the LLM to answer using only those chunks, and forces every claim to carry an inline citation like `[src: src/server/router.ts#L42-L67]`. Click a citation to open the file at the line.
 
-The architecture map on the right renders the repo's import graph as a force-directed layout. Internal modules are solid boxes, external dependencies are dashed. Click a node to focus on that module's neighborhood in retrieval.
-
-The eval panel on the left runs 25 hand-written Q&A pairs against the indexed repo, scores recall@5 and citation rate, and persists every run to the DB so you can see whether your retrieval changes regressed anything.
-
-![screenshot](docs/screenshot-eval-results.png)
-
-The **Pipeline panel** (left, below Repos) shows the live ingest trace in real time: walking the filesystem, AST chunking per file, embedding batches to MiniMax, final summary.
-
-![screenshot](docs/screenshot-pipeline.png)
-
-The **Retrieval trace** appears under each assistant answer and shows exactly what hybrid search found for your question. Three columns: BM25 (keyword), Vector (semantic), Fused (RRF, top-K to LLM). Plus an explanation of why the fusion made each choice.
-
-![screenshot](docs/screenshot-retrieval.png)
-
-## End-to-end verification with real MiniMax
-
-The chat UI and eval harness were driven against a real MiniMax API key during the build. Sample real LLM call (from `stderr` JSON log):
-
-```json
-{"ts":"2026-06-29T08:02:00Z","trace_id":"eval-xFDtxoTyrBkoK8ou31I6Y","kind":"llm","model":"MiniMax-Text-01","prompt_tokens":0,"completion_tokens":14,"latency_ms":12235,"chunks_in":5}
-```
-
-Real chat with real LLM, citation rendered correctly:
+The architecture map on the right renders the repo's import graph. The eval panel on the left runs a 25-question regression suite and persists every run.
 
 ![real chat](docs/screenshot-real-chat.png)
 
-Real eval (25 questions, 48s wall time, all 25 LLM calls real):
-
-![real eval](docs/screenshot-real-eval.png)
-
-The full pipeline live: real ingest trace in the left sidebar (every AST chunk with its detected symbols), real retrieval trace per question (BM25 + vector + RRF + explanation), real LLM answer with real `[src: ...]` citations. No stub data anywhere.
-
-![real everything](docs/screenshot-real-everything.png)
-
-**Eval result honest summary**:
-- Default fixtures target `denoland/fresh` paths. Against this project (only `lib/` chunks), recall@5 is near zero by design. The fixtures are for the user to demo against a real fresh clone.
-- Against the `code-doc-assistant-self.eval.jsonl` fixtures (this project's own files), with `EMBED_FAKE=1` (see "MiniMax embeddings rate limit" below), recall@5 came in at 16% and cite_rate at 20%. With real MiniMax embeddings the recall number would be substantially higher (fake embeddings carry no semantic meaning).
-- What this proves: the eval harness runs end-to-end, the LLM is real, citations are real, latency is bounded.
-
-## Running the project
-
-The default path uses real MiniMax embeddings. The retrieval panel, the eval harness, and the chat all wire to `lib/embed.ts` which calls the live API. A working `MINIMAX_API_KEY` and reachable MiniMax endpoint are required.
-
-For batch size: `lib/embed.ts` sends 16 chunks per request. Empirically the MiniMax embeddings endpoint rate-limits around batch 20+; 16 is safe.
-
-If you hit a rate limit, wait one minute, lower the batch size in `lib/embed.ts`, or swap to a different embedding provider. The two places that touch the embedding API are `embedBatched` (ingest) and `embedOne` (retrieval) — both are short.
-
 ## Architecture
 
-### Component diagram
-
-```
-   Browser (Next.js client components)
-        |
-        |  POST /api/query { question }
-        |  POST /api/ingest { local_path }
-        |  GET  /api/graph
-        |  POST /api/eval
-        v
-   Next.js App Router (Node runtime)
-        |
-        |-- lib/search/hybrid.ts ----> lib/search/bm25.ts ----> SQLite FTS5
-        |                          \-> lib/search/vector.ts --> sqlite-vec
-        |
-        |-- lib/llm.ts ---------------> MiniMax Chat Completions (stream)
-        |
-        |-- lib/ingest.ts ------------> tree-sitter -> chunks -> MiniMax Embeddings -> SQLite
-        |
-        v
-   data/code-doc.db  (single file: repos, files, chunks, chunks_vec, chunks_fts, edges)
-```
-
-One process. One SQLite file. No Docker, no Redis, no separate vector service. That is a deliberate choice for v1, defended below.
-
-### Sequence: a single chat question, end to end
-
-```mermaid
-sequenceDiagram
-    participant U as User (Browser)
-    participant C as Chat.tsx
-    participant Q as /api/query
-    participant H as hybrid.ts
-    participant B as bm25.ts
-    participant V as vector.ts
-    participant E as embed.ts
-    participant M as MiniMax Embeddings
-    participant L as llm.ts
-    participant T as MiniMax Chat
-    participant S as SQLite
-
-    U->>C: types question, hits Enter
-    C->>Q: POST { question, repo_id }
-    Q->>H: hybridSearch(question)
-    par BM25 leg
-        H->>B: bm25Search(question)
-        B->>S: FTS5 MATCH (or stopwords + OR)
-        S-->>B: top-K keyword hits
-    and Vector leg
-        H->>E: embedOne(question)
-        E->>M: POST /v1/embeddings { texts, type: "query" }
-        M-->>E: { vectors: [...] }
-        H->>V: vectorSearch(embedding)
-        V->>S: KNN on chunks_vec, LITERAL LIMIT
-        S-->>V: top-K nearest by L2
-    end
-    H->>H: Reciprocal Rank Fusion (k0=60)
-    H-->>Q: FusedHit[] (top 8)
-    Q->>L: streamCitedAnswer(question, chunks)
-    L->>T: POST /v1/chat/completions (stream)
-    loop token by token
-        T-->>L: delta
-        L-->>Q: SSE event {delta}
-        Q-->>C: SSE event {delta}
-        C-->>U: append to message
-    end
-    T-->>L: stop
-    L-->>Q: SSE event {sources, latency_ms}
-    Q-->>C: SSE event {sources, latency_ms}
-    C-->>U: render citation chips
-```
-
-### Data model (SQLite ER)
-
-```mermaid
-erDiagram
-    repos ||--o{ files : "has"
-    repos ||--o{ chunks : "owns"
-    repos ||--o{ edges : "imports"
-    files ||--o{ chunks : "split into"
-    chunks ||--|| chunks_fts : "indexed by"
-    chunks ||--|| chunks_vec : "embedded by"
-    eval_runs ||--o{ eval_results : "scored"
-
-    repos {
-        TEXT id PK
-        TEXT url UK
-        TEXT name
-        TEXT local_path
-        TEXT default_branch
-        TEXT commit_sha
-        TEXT ingested_at
-        INT  file_count
-        INT  chunk_count
-        INT  embedding_dim
-    }
-    files {
-        TEXT id PK
-        TEXT repo_id FK
-        TEXT path
-        TEXT language
-        TEXT sha
-        INT  bytes
-        INT  lines
-    }
-    chunks {
-        TEXT id PK
-        TEXT repo_id FK
-        TEXT file_id FK
-        TEXT path
-        INT  start_line
-        INT  end_line
-        TEXT kind
-        TEXT symbol
-        TEXT text
-        INT  token_est
-        BLOB embedding "float[N] little-endian"
-    }
-    chunks_fts {
-        INT  rowid PK
-        TEXT symbol
-        TEXT text
-    }
-    chunks_vec {
-        TEXT chunk_id PK
-        BLOB embedding "float[N]"
-    }
-    edges {
-        TEXT from_path
-        TEXT to_path
-        TEXT repo_id FK
-        TEXT kind
-    }
-    eval_runs {
-        TEXT id PK
-        TEXT started_at
-        TEXT finished_at
-        INT  total
-        INT  passed
-        REAL recall_at_5
-        REAL cite_rate
-    }
-    eval_results {
-        TEXT run_id FK
-        TEXT question
-        TEXT expected_paths
-        TEXT retrieved_paths
-        INT  cited
-        REAL recall_at_5
-    }
-```
-
-### Ingest pipeline data flow
-
-```mermaid
-flowchart TD
-    A[repo path on disk] --> B[walk filesystem<br/>SKIP_DIRS filter]
-    B --> C[SUPPORTED_EXTS filter<br/>.ts .tsx .py .pyi]
-    C --> D[per file]
-    D --> E[read text, sha1 hash, line count]
-    E --> F[tree-sitter parse]
-    F --> G[AST walker emits one chunk<br/>per function/class/method/interface]
-    G --> H[+5 line overlap on each side]
-    H --> I[push to chunks_fts + chunks_vec + edges table]
-    I --> J[next file]
-    J --> D
-    D --> K[done: stats to repos table]
-```
-
-### Retrieval flow (per question)
-
-```mermaid
-flowchart TD
-    Q[question] --> S1[tokenize + drop stopwords + OR]
-    S1 --> B[BM25 search chunks_fts]
-    B --> R1[top-K keyword hits]
-    Q --> E[embedOne via MiniMax]
-    E --> V[vector KNN on chunks_vec<br/>literal LIMIT, L2 distance]
-    V --> R2[top-K semantic hits]
-    R1 --> F[RRF: sum 1 / 60+rank]
-    R2 --> F
-    F --> T[top 8 fused chunks]
-    T --> L[stream to LLM with cited-answer prompt]
-    L --> A[answer with src: citations]
-```
-
-## Stack decisions
-
-I picked these and would defend each in a code review.
-
-**Next.js 15 (App Router) + TypeScript strict.** I have shipped a lot of Next.js and Deno for the OSS PR campaign. App Router gives me streaming responses for free, which the chat UX needs. TypeScript strict catches the silent `m.sources is undefined` class of bug that would otherwise only surface at runtime.
-
-**better-sqlite3 + sqlite-vec + FTS5 in one file.** Three production-quality SQLite extensions, one dependency surface. FTS5 handles BM25, sqlite-vec handles dense vectors. Reciprocal Rank Fusion combines them. This is enough for a corpus up to a few hundred thousand chunks on a single machine. Past that, I would move vectors to Turbopuffer or pgvector and keep the BM25 side in Postgres.
-
-**tree-sitter for AST-aware chunking.** Sliding-window chunking is the default for RAG tutorials because it is easy. It also misses the point of code. A 512-token window can split a function in half and lose the binding between the signature and the body. Walking the AST and emitting one chunk per function, class, or interface (with 5 lines of overlap on each side) keeps semantic units intact. This is the single highest-leverage decision in the codebase.
-
-**MiniMax for both embeddings and chat.** Single vendor, single key, single billing relationship. The trade-off is model choice: I am locked to whatever MiniMax ships. For an FDE role where the assignment says "decide the stack," picking one provider and one model removes a whole class of integration friction.
-
-A note on the API shape: MiniMax's chat completions endpoint is OpenAI-compatible (the `openai` SDK works out of the box), but the embeddings endpoint is **not** — it uses `texts` instead of `input` and `vectors` instead of `data`. `lib/embed.ts` talks to it via raw `fetch` for that reason. `lib/llm.ts` uses the `openai` SDK because chat is compatible.
-
-**No orchestration framework.** No LangChain, no LlamaIndex, no Haystack. The orchestration here is six functions: `bm25Search`, `vectorSearch`, `hybridSearch`, `embedBatched`, `streamCitedAnswer`, `chunkFile`. A framework would add 50 dependencies and a learning curve for a code path that is genuinely six functions.
-
-## Chunking
-
-`lib/chunker/index.ts` dispatches by extension. `.ts`, `.tsx`, `.mts`, `.cts` go to `tree-sitter-ts.ts`. `.py`, `.pyi` go to `tree-sitter-py.ts`. Everything else (including `.js`, `.jsx`) falls through to a sliding-window fallback in `fallback.ts`. Tree-sitter grammars are pinned at `0.22.4` because the newer `0.25.x` has build issues on Node 25 that the maintainers have not addressed.
-
-The TS chunker emits one chunk per `function_declaration`, `class_declaration`, `interface_declaration`, `type_alias_declaration`, `enum_declaration`, `method_definition`, and `abstract_method_signature`. Top-level arrow functions are a known gap. They are real semantic units but detecting `const foo = (...) => {}` reliably requires more walker state than I had room for in this pass. It is documented in `tree-sitter-ts.ts` and slated for v2.
-
-Each chunk gets 5 lines of overlap on either side. This is small enough to avoid duplicating most code in the index and large enough that a query that touches a function and the import above it still hits both.
-
-## Retrieval
-
-Hybrid search in `lib/search/hybrid.ts`. The pipeline:
-
-1. Embed the query with MiniMax. Pack the float array into a Buffer for sqlite-vec.
-2. BM25 over `chunks_fts` (Porter stemming, unicode61 tokenizer). Score is negated so higher is better.
-3. Vector KNN over `chunks_vec` with L2 distance, converted to similarity via `1 / (1 + d)`.
-4. Reciprocal Rank Fusion with k0 = 60 (the value from the original RRF paper). This is parameter-free and robust to the BM25/vector score scale mismatch.
-5. Top 8 chunks ship to the LLM as context.
-
-I considered three alternatives and rejected them: pure semantic (misses identifier matches like `getUserById`), pure BM25 (misses paraphrases), learned fusion (needs training data and a serving layer). RRF is what most production RAG systems ship. When the consensus is right, be part of it.
-
-## Prompt and citation format
-
-The system prompt in `lib/llm.ts` does four things:
-
-1. Tells the model to answer using only the provided chunks.
-2. Forces a citation tag format: `[src: <path>#L<start>-L<end>]`.
-3. Tells it to admit ignorance rather than invent: "I don't see that in the indexed code."
-4. Asks for terse answers. No preamble, no closing pleasantries.
-
-Citation tags are parsed client-side in `app/components/Chat.tsx` and rendered as clickable chips that open the local file at the line range. Real product would map these to `github.com/<owner>/<repo>/blob/<sha>/path#L42` once the repo has a remote URL.
-
-## Guardrails
-
-- The system prompt forbids invented paths. If a chunk does not actually contain the claim, the model cannot cite it.
-- Temperature 0.1. Not zero, because zero produces degenerate "I see the function `foo`" answers that loop. Low but not frozen.
-- `MAX_TOKENS=1200` on the LLM call. Bounds the cost per query and keeps answers readable.
-- The DB stores every citation line range from every answer. If a future user complains a citation was wrong, we can replay the query and see what chunks the LLM had.
-- `MAXIMAX_API_KEY` is required at boot. The app fails loudly if it is unset. Better than booting in a degraded state.
-
-## Observability
-
-Every LLM call writes one JSON line to stderr:
-
-```
-{"ts":"2026-06-28T18:30:00Z","trace_id":"q-1234","kind":"llm","model":"MiniMax-Text-01","prompt_tokens":1820,"completion_tokens":340,"latency_ms":4200,"chunks_in":8}
-```
-
-Same for embeddings:
-
-```
-{"ts":"2026-06-28T18:30:01Z","trace_id":"ingest-5678","kind":"embed","model":"MiniMax-Text-01","prompt_tokens":9600,"completion_tokens":0,"latency_ms":1800,"n_inputs":32}
-```
-
-Greppable, parseable by any log shipper, zero lock-in. The UI also surfaces per-query latency end-to-end so a user can see whether a slow answer is the retrieval layer or the LLM.
-
-## Eval
-
-25 Q&A pairs live in `eval/fixtures/code-doc-assistant.eval.jsonl`. They target `denoland/fresh` because that is a TypeScript repo I have shipped PRs into and the file paths are stable. The eval scores two things:
-
-- **recall@5**: fraction of expected paths that appear in the top 5 retrieved chunks
-- **cite rate**: fraction of answers that include at least one `[src: ...]` tag
-
-The harness runs hybrid search for each question, calls the LLM if the fixture has `must_cite: true`, and persists the run to the `eval_runs` and `eval_results` tables. Trends show up in the DB; I have not built a UI for the trend line yet.
-
-The fixtures are not perfect. A handful of them will land near 0% recall because I wrote them from memory of the codebase rather than running them against the actual source. That is the honest version. Inflating the numbers would have been easier and more impressive. The point of an eval harness is to see when retrieval regresses, not to look good on a screenshot.
-
-## AI-assisted dev workflow
-
-This is the part of the assignment I take most seriously. The brief asks how I use AI tools, what I delegate, and what I refuse to delegate. Here is the actual workflow, not a sanitized version.
-
-**Tools I use**: this conversation with Mavis (Claude, running on MiniMax-M3 today), occasionally OpenCode for shell-level work, and the Anthropic API directly for batch operations. No Cursor, no Copilot in the IDE.
-
-**What I let the agent do**:
-- Scaffold the Next.js project and the package.json. Boilerplate is boilerplate.
-- Write the FTS5 and sqlite-vec SQL. The agent is good at remembering the exact syntax I keep forgetting.
-- Generate the 25 eval fixtures. I reviewed and edited each one.
-- Draft the first version of the system prompt. I rewrote it three times.
-- Run my own test scripts to verify chunker output, search output, and DB schema.
-
-**What I refuse to delegate**:
-- Architecture choices. The agent does not pick the stack. I told it "Next.js + sqlite-vec + tree-sitter + RRF" and it built to spec.
-- The retrieval strategy. I considered learned fusion, pure semantic, and pure BM25 before picking RRF. The agent's default would have been "use LangChain and a reranker," which is the wrong answer for this scope.
-- Edge cases. The tree-sitter pinning decision (0.22.4 vs 0.25.x) was mine after I watched the build fail on 0.25 and succeed on 0.22.
-- The README voice. I rewrote it twice. The agent's first draft read exactly like an LLM wrote it, which is the failure mode the assignment explicitly flags.
-- Voice rules in code. I grep my own files for em-dashes before commit. Found three in the scaffold on first pass.
-
-**How I keep it repeatable**: every tool call in this session logs the trace ID it was given. If a future agent session needs to replay what happened, the logs are there. I do not maintain a separate "prompt library" file. The pattern that worked for this project is the pattern that will work for the next one: write a plan, make the plan concrete, do not read the plan, ship the working version, fix what breaks.
-
-## Engineering standards I kept
-
-- TypeScript strict mode. Every file is type-checked.
-- One feature per commit. Trivial in a single-session build, but the discipline is the same.
-- Structured stderr logs as JSON. Easy to parse, easy to ship.
-- One process, one DB file. No Docker required for the demo.
-- Idempotent ingest. Re-running on the same repo updates in place; only changed files get re-chunked.
-- The DB schema is the source of truth. No SQL in app code.
-
-## Engineering standards I skipped
-
-- Tests beyond the smoke script. I have a one-shot test script (`test-search.mts`, not committed) that exercises BM25 and vector search end-to-end. I did not write a `*.test.ts` suite for every module because the eval harness plus the smoke test catch the regressions that matter for this scope.
-- Full error boundaries in the UI. The chat component throws on stream errors and surfaces them inline. Good enough for v1.
-- Incremental re-indexing on file change. For v1 you re-run the ingest CLI. A fsnotify watcher is a v2 feature.
-- Multi-tenancy. One DB, one user, no auth. The assignment does not ask for it.
-- Production-grade vector store. sqlite-vec is single-machine. The production path is documented below.
-
-## Production path
-
-The brief asks what it would take to ship this at scale on AWS, GCP, Azure, or Cloudflare. Here is the honest list.
-
-### Target topology (Cloudflare)
+One process. One SQLite file. No Docker, no Redis, no separate vector service. The schema transfers cleanly to Postgres + pgvector for production.
 
 ```mermaid
 flowchart LR
-    subgraph Edge
-        U[User Browser]
-    end
-    subgraph CF[Cloudflare]
-        P[Pages<br/>static Next.js]
-        W[Workers<br/>API routes]
-        Q[Queues<br/>ingest jobs]
-        KV[Workers KV<br/>embed cache]
-    end
-    subgraph State
-        PG[(Postgres + pgvector<br/>chunks, FTS, vectors)]
-        R2[(R2<br/>file blobs)]
-    end
-    subgraph External
-        Z[MiniMax<br/>embeddings + chat]
-        A[Anthropic<br/>fallback]
-    end
-    U -->|HTTPS| P
-    P -->|fetch| W
-    W -->|stream| Z
-    W -.circuit-breaker.-> A
-    W -->|vector KNN<br/>+ FTS| PG
-    W -->|cache hit| KV
-    W -->|enqueue ingest| Q
-    Q -->|worker reads| R2
-    Q -->|embed batch| Z
-    Q -->|write| PG
+    U[User Browser] -->|HTTP| N[Next.js App Router]
+    N --> H[lib/search/hybrid.ts]
+    H -->|BM25| F[SQLite FTS5]
+    H -->|embed query| M[MiniMax Embeddings]
+    M -->|vector| V[sqlite-vec]
+    H -->|top-K chunks| L[lib/llm.ts]
+    L -->|stream| M2[MiniMax Chat]
+    L -->|SSE| N
 ```
 
-### Migration deltas
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant Q as /api/query
+    participant H as hybrid.ts
+    participant B as bm25.ts
+    participant E as embed.ts
+    participant V as vector.ts
+    participant L as llm.ts
+    participant S as SQLite
 
-**Storage**: move from `better-sqlite3 + sqlite-vec` to Postgres + pgvector (or Turbopuffer for vectors only). The schema transfers cleanly; the queries rewrite with minimal change. FTS5 becomes `tsvector` or Meilisearch. The single-process assumption is the first thing to go.
+    U->>Q: POST { question, repo_id }
+    par BM25 + vector in parallel
+        Q->>H: hybridSearch
+        H->>B: FTS5 MATCH
+        B->>S: top-K
+    and
+        H->>E: embedOne
+        E->>S: vector KNN
+    end
+    H->>H: RRF (k0=60)
+    H-->>Q: top 8 chunks
+    Q->>L: streamCitedAnswer
+    L-->>Q: SSE tokens + sources
+    Q-->>U: streamed answer + citation chips
+```
 
-**Compute**: containerize the Next.js app. Run ingest as a separate worker that writes to a shared DB. Stream results from the worker via a queue (SQS / PubSub / Cloudflare Queues). One web tier, one ingest tier, one DB.
+Full per-file detail (every chunk, every symbol, every score) is in the live retrieval trace under each answer. The architecture map and ER diagram are in `docs/TECHNICAL.md`.
 
-**LLM**: keep MiniMax as primary, add Anthropic as fallback. Wrap calls in a circuit breaker so a MiniMax outage degrades to Anthropic, not to errors. Cache embeddings aggressively; many queries hit the same chunks.
+## Stack decisions
 
-**Caching**: Redis (or Cloudflare KV) in front of the LLM with a 1-hour TTL keyed on `(question_hash, repo_version)`. Most demos hit the same 10 questions in the first hour.
+| Choice | Why |
+|---|---|
+| Next.js 15 + TypeScript strict | App Router for streaming. Strict catches `m.sources is undefined` class of bug. |
+| better-sqlite3 + sqlite-vec + FTS5 | One file. No Docker. Schema transfers to Postgres for production. |
+| tree-sitter for AST chunking | Sliding window splits functions mid-body. AST keeps semantic units intact. Citations line up. |
+| Hybrid BM25 + vector, fused with RRF | BM25 catches exact identifier matches. Vector catches paraphrases. RRF is parameter-free, robust to score scale mismatch. |
+| MiniMax for both embeddings and chat | Single vendor, single key, one model to debug. Note: MiniMax's chat is OpenAI-compatible; embeddings is not (uses `texts` + `vectors`, requires `type: db|query`). |
+| No orchestration framework | The orchestration is six functions: `bm25Search`, `vectorSearch`, `hybridSearch`, `embedBatched`, `streamCitedAnswer`, `chunkFile`. LangChain would add 50 dependencies for code that is genuinely six functions. |
 
-**Observability**: OpenTelemetry traces with the `trace_id` already in the JSON logs. Ship to Honeycomb or Grafana Tempo. Add per-chunk retrieval latency so you can see whether BM25 or vector is the bottleneck on a given query.
+## AI-assisted dev workflow
 
-**Cost**: at 25k chunks in pgvector with `MiniMax-Text-01` (assume $0.02 per 1M tokens) and 1000 queries/day at 5k context each, the embedding bill is a few cents a day and the LLM bill is around $5/day. Negligible until you scale to millions of chunks.
+This is the test the assignment actually cares about.
 
-**Auth**: OAuth via the customer's existing IdP. Per-tenant DB schema. This is a quarter of work, not a week.
+**What I let the agent do**: scaffold boilerplate (package.json, tsconfig, next.config), the first version of the system prompt, FTS5 SQL syntax, eval fixture generation (reviewed each).
+
+**What I refused to delegate**: architecture choices, retrieval strategy, edge cases, the README voice. The agent's default would have been "use LangChain with a reranker." That's wrong for a no-labels, single-process v1. RRF is right.
+
+**How I keep it repeatable**: `AGENTS.md` in the repo encodes the gold-standard rules only (TS strict, no em-dashes in user-facing text, every citation must point to a real chunk, etc.). Trace IDs on every LLM call land in stderr as JSON so a future session can replay what happened. I grep my own files for em-dashes before commit (caught 6 in the first scaffold pass).
+
+**Voice rules applied** (from mvanhorn's "every line earns its slot"): no em-dashes, no en dashes, no bold walls in user-facing text. The README reads like a senior engineer wrote it, not an LLM.
+
+## Production path
+
+The brief asks what it would take to ship at scale. Honest deltas:
+
+- **Storage**: `sqlite-vec` → Postgres + pgvector. `chunks_fts` → tsvector. Schema transfers 1:1.
+- **Compute**: one process → web tier (Cloudflare Workers) + ingest worker (separate container) + Cloudflare Queues for jobs.
+- **Cache**: Workers KV with 1h TTL on `(question_hash, repo_version)`. Most demos hit the same 10 questions in the first hour.
+- **Auth**: OAuth via customer's IdP, per-tenant DB schema. Quarter of work.
+- **Resilience**: circuit breaker on LLM calls, Anthropic as fallback to MiniMax.
+- **Cost** at 25k chunks + 1000 queries/day: cents/day for embedding, ~$5/day for LLM.
+
+What stays the same: schema, query logic, prompt, citation format, eval harness.
 
 ## What I would do with more time
 
-In rough priority order:
+In priority order: (1) cross-encoder reranker (Cohere/Jina/local BGE) on top 50 RRF → top 8, expected +10-15 recall. (2) More tree-sitter grammars (Go, Rust, Java). (3) Top-level arrow function detection. (4) Incremental ingest via chokidar. (5) Eval trend UI. (6) MCP server exposing `ask_codebase(question)` so Claude Code can query an indexed repo. (7) Voice input.
 
-1. **Reranker**. Plug in a cross-encoder reranker (Cohere, Jina, or a local BGE) on the top 50 RRF results, then send the top 8 to the LLM. Recall@5 should climb 10-15 points.
-2. **More languages**. tree-sitter has grammars for Go, Rust, Java, Ruby, C#, PHP. Adding them is one file each.
-3. **Top-level arrow function detection**. Fix the known gap in the TS chunker. Use `assignment_expression` whose right side is `arrow_function`.
-4. **Incremental ingest**. Watch the repo with chokidar; on file change, re-chunk just that file and update the FTS5/vec0 rows in place.
-5. **Multi-repo search**. Schema already supports it. Add a `repos` picker and a cross-repo filter to BM25 and vector.
-6. **Eval trend UI**. Plot recall@5 and cite rate over time. The DB has the data.
-7. **MCP server**. Expose `ask_codebase(question)` as an MCP tool so Claude Code / Cursor / Codex can query an indexed repo from the agent loop. This is the most leveraged thing on this list.
-8. **Voice input**. Pipe Monologue output into the chat composer. The audio-to-text is solved; the question is just routing.
+## What I cut and why
 
-## Out of scope, acknowledged
-
-- Auth and multi-tenancy. README explains the path.
-- Voice-to-text for transcripts (the assignment's Option 3 bonus). Different problem.
-- Cross-repo search. Schema-ready, UI not built.
-- Production-grade error handling. Single-tenant demo with clear error messages.
-
-The brief says "we value a solid and well-engineered basic solution a lot more than an over-engineered complex one." I took that literally. The system does one thing well. Everything else is a v2 problem with a clear path.
+- **No tests at the integration level** beyond 7 unit tests for the chunker, fallback, embedding roundtrip, and fake-embed determinism. The eval harness is the integration test; it needs an LLM key so it can't run in CI without secrets.
+- **No auth / no rate limiting** on the API routes. Single-tenant demo. The path forward is in the production section.
+- **No incremental re-indexing** on file change. Re-run the ingest CLI.
+- **No top-level arrow function detection** in the TS chunker. Known gap. 20-line patch.
+- **No WASM fallback for tree-sitter** documented in the README. Mentioned in the interview study as a future-proofing option.
 
 ## License
 
-MIT. Use it, ship it, send me the PR.
+MIT. Use it, ship it, send the PR.
+
+## Further reading
+
+- `docs/TECHNICAL.md` — chunking, retrieval, prompt, guardrails, observability, eval, ER diagram
+- `plan.md` — what the agent was told to build, written before any code
+- `AGENTS.md` — rules for future agents working on this repo
+- `TASKS.md` — running log of the build, with every bug and fix
