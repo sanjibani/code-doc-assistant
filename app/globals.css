@@ -54,7 +54,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 
 .app {
   display: grid;
-  grid-template-columns: var(--left-width) 6px 1fr 320px;
+  grid-template-columns: var(--left-width) 10px 1fr 320px;
   grid-template-rows: 48px 1fr;
   grid-template-areas:
     "header header header header"
@@ -68,22 +68,40 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   position: relative;
   z-index: 2;
 }
-.resize-handle::after {
+.resize-handle::before {
   content: "";
   position: absolute;
   top: 0;
+  bottom: 0;
   left: 50%;
-  width: 1px;
-  height: 100%;
+  width: 2px;
+  margin-left: -1px;
   background: var(--border);
-  transform: translateX(-0.5px);
   transition: background 0.15s ease;
+}
+.resize-handle::after {
+  content: "⋮";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: -2px;
+  padding: 6px 2px;
+  background: var(--bg-elev);
+  border-radius: 4px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.resize-handle:hover::before,
+.resize-handle.dragging::before {
+  background: var(--accent);
 }
 .resize-handle:hover::after,
 .resize-handle.dragging::after {
-  background: var(--accent);
-  width: 2px;
-  transform: translateX(-1px);
+  color: var(--accent);
+  background: var(--bg);
 }
 .header {
   grid-area: header;
