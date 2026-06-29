@@ -80,6 +80,8 @@ If the rate limit hits, set `EMBED_FAKE=1` and continue. The retrieval quality w
 
 ## Architecture
 
+### Component diagram
+
 ```
    Browser (Next.js client components)
         |
@@ -102,6 +104,167 @@ If the rate limit hits, set `EMBED_FAKE=1` and continue. The retrieval quality w
 ```
 
 One process. One SQLite file. No Docker, no Redis, no separate vector service. That is a deliberate choice for v1, defended below.
+
+### Sequence: a single chat question, end to end
+
+```mermaid
+sequenceDiagram
+    participant U as User (Browser)
+    participant C as Chat.tsx
+    participant Q as /api/query
+    participant H as hybrid.ts
+    participant B as bm25.ts
+    participant V as vector.ts
+    participant E as embed.ts
+    participant M as MiniMax Embeddings
+    participant L as llm.ts
+    participant T as MiniMax Chat
+    participant S as SQLite
+
+    U->>C: types question, hits Enter
+    C->>Q: POST { question, repo_id }
+    Q->>H: hybridSearch(question)
+    par BM25 leg
+        H->>B: bm25Search(question)
+        B->>S: FTS5 MATCH (or stopwords + OR)
+        S-->>B: top-K keyword hits
+    and Vector leg
+        H->>E: embedOne(question)
+        E->>M: POST /v1/embeddings { texts, type: "query" }
+        M-->>E: { vectors: [...] }
+        H->>V: vectorSearch(embedding)
+        V->>S: KNN on chunks_vec, LITERAL LIMIT
+        S-->>V: top-K nearest by L2
+    end
+    H->>H: Reciprocal Rank Fusion (k0=60)
+    H-->>Q: FusedHit[] (top 8)
+    Q->>L: streamCitedAnswer(question, chunks)
+    L->>T: POST /v1/chat/completions (stream)
+    loop token by token
+        T-->>L: delta
+        L-->>Q: SSE event {delta}
+        Q-->>C: SSE event {delta}
+        C-->>U: append to message
+    end
+    T-->>L: stop
+    L-->>Q: SSE event {sources, latency_ms}
+    Q-->>C: SSE event {sources, latency_ms}
+    C-->>U: render citation chips
+```
+
+### Data model (SQLite ER)
+
+```mermaid
+erDiagram
+    repos ||--o{ files : "has"
+    repos ||--o{ chunks : "owns"
+    repos ||--o{ edges : "imports"
+    files ||--o{ chunks : "split into"
+    chunks ||--|| chunks_fts : "indexed by"
+    chunks ||--|| chunks_vec : "embedded by"
+    eval_runs ||--o{ eval_results : "scored"
+
+    repos {
+        TEXT id PK
+        TEXT url UK
+        TEXT name
+        TEXT local_path
+        TEXT default_branch
+        TEXT commit_sha
+        TEXT ingested_at
+        INT  file_count
+        INT  chunk_count
+        INT  embedding_dim
+    }
+    files {
+        TEXT id PK
+        TEXT repo_id FK
+        TEXT path
+        TEXT language
+        TEXT sha
+        INT  bytes
+        INT  lines
+    }
+    chunks {
+        TEXT id PK
+        TEXT repo_id FK
+        TEXT file_id FK
+        TEXT path
+        INT  start_line
+        INT  end_line
+        TEXT kind
+        TEXT symbol
+        TEXT text
+        INT  token_est
+        BLOB embedding "float[N] little-endian"
+    }
+    chunks_fts {
+        INT  rowid PK
+        TEXT symbol
+        TEXT text
+    }
+    chunks_vec {
+        TEXT chunk_id PK
+        BLOB embedding "float[N]"
+    }
+    edges {
+        TEXT from_path
+        TEXT to_path
+        TEXT repo_id FK
+        TEXT kind
+    }
+    eval_runs {
+        TEXT id PK
+        TEXT started_at
+        TEXT finished_at
+        INT  total
+        INT  passed
+        REAL recall_at_5
+        REAL cite_rate
+    }
+    eval_results {
+        TEXT run_id FK
+        TEXT question
+        TEXT expected_paths
+        TEXT retrieved_paths
+        INT  cited
+        REAL recall_at_5
+    }
+```
+
+### Ingest pipeline data flow
+
+```mermaid
+flowchart TD
+    A[repo path on disk] --> B[walk filesystem<br/>SKIP_DIRS filter]
+    B --> C[SUPPORTED_EXTS filter<br/>.ts .tsx .py .pyi]
+    C --> D[per file]
+    D --> E[read text, sha1 hash, line count]
+    E --> F[tree-sitter parse]
+    F --> G[AST walker emits one chunk<br/>per function/class/method/interface]
+    G --> H[+5 line overlap on each side]
+    H --> I[push to chunks_fts + chunks_vec + edges table]
+    I --> J[next file]
+    J --> D
+    D --> K[done: stats to repos table]
+```
+
+### Retrieval flow (per question)
+
+```mermaid
+flowchart TD
+    Q[question] --> S1[tokenize + drop stopwords + OR]
+    S1 --> B[BM25 search chunks_fts]
+    B --> R1[top-K keyword hits]
+    Q --> E[embedOne via MiniMax]
+    E --> V[vector KNN on chunks_vec<br/>literal LIMIT, L2 distance]
+    V --> R2[top-K semantic hits]
+    R1 --> F[RRF: sum 1 / 60+rank]
+    R2 --> F
+    F --> T[top 8 fused chunks]
+    T --> L[stream to LLM with cited-answer prompt]
+    L --> A[answer with src: citations]
+```
 
 ## Stack decisions
 
@@ -227,6 +390,41 @@ This is the part of the assignment I take most seriously. The brief asks how I u
 ## Production path
 
 The brief asks what it would take to ship this at scale on AWS, GCP, Azure, or Cloudflare. Here is the honest list.
+
+### Target topology (Cloudflare)
+
+```mermaid
+flowchart LR
+    subgraph Edge
+        U[User Browser]
+    end
+    subgraph CF[Cloudflare]
+        P[Pages<br/>static Next.js]
+        W[Workers<br/>API routes]
+        Q[Queues<br/>ingest jobs]
+        KV[Workers KV<br/>embed cache]
+    end
+    subgraph State
+        PG[(Postgres + pgvector<br/>chunks, FTS, vectors)]
+        R2[(R2<br/>file blobs)]
+    end
+    subgraph External
+        Z[MiniMax<br/>embeddings + chat]
+        A[Anthropic<br/>fallback]
+    end
+    U -->|HTTPS| P
+    P -->|fetch| W
+    W -->|stream| Z
+    W -.circuit-breaker.-> A
+    W -->|vector KNN<br/>+ FTS| PG
+    W -->|cache hit| KV
+    W -->|enqueue ingest| Q
+    Q -->|worker reads| R2
+    Q -->|embed batch| Z
+    Q -->|write| PG
+```
+
+### Migration deltas
 
 **Storage**: move from `better-sqlite3 + sqlite-vec` to Postgres + pgvector (or Turbopuffer for vectors only). The schema transfers cleanly; the queries rewrite with minimal change. FTS5 becomes `tsvector` or Meilisearch. The single-process assumption is the first thing to go.
 

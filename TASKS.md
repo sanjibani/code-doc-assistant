@@ -140,3 +140,16 @@ The project boots, builds, ingests, searches, streams answers, and runs eval. Th
 - Real eval result: 0/25 default fixtures (designed for fresh, demo only has 6 lib files), 1/25 self-fixtures (recall@5 16%, cite_rate 20% with fake embeddings; would be much higher with real ones).
 - Updated README with end-to-end verification section + MiniMax API note + EMBED_FAKE documentation.
 - Pushed to GitHub via `gh repo create sanjibani/code-doc-assistant --public --push --source=.` → https://github.com/sanjibani/code-doc-assistant
+
+## 2026-06-29 14:55 IST — Replace retrieval + trace stubs with real pipeline
+
+- User caught the retrieve-route comment: "In production this route would actually run hybrid search and return the FusedHit[] directly. For the demo we return a precomputed example trace." That was misleading. The retrieval panel ABOVE the LLM answer was fake data even when the LLM and citations were real.
+- Rewrote `app/api/retrieve/route.ts` to call `bm25Search`, `embedOne`, `vectorSearch`, and `hybridSearch` in-process. Returns the actual top-K chunks with real scores.
+- Rewrote `app/api/ingest/trace/route.ts` to read from a real in-memory event buffer.
+- Added `lib/ingest-progress.ts` (per-repo ring buffer, 500 events cap).
+- Modified `lib/ingest.ts` to `pushEvent` on walking, each chunked file (with the symbols found), each embedding batch, and the final done event.
+- Fixed `lib/search/bm25.ts` `sanitize`: was ANDing every token in the question, so a 6-word question like "What does the ingestRepo function do?" returned zero hits. Now drops stopwords and ORs the remaining meaningful terms with a prefix wildcard on the last.
+- Fixed `lib/ingest.ts` chunk insert: was passing `embeddings[i]` (float array) directly to better-sqlite3 prepared statement, which broke with "Too many parameter values". Now wraps with `packEmbedding()`.
+- Re-ingested the project itself (41 files, 136 chunks, 95 edges). Verified the retrieval panel shows real BM25 + vector + RRF columns with actual scores. Verified the trace panel shows real `[walk] → [chunk] lib/ingest.ts — 6 AST chunks → ... → [done]` events.
+- Updated README. Dropped the 4 demo screenshots. Replaced with `docs/screenshot-real-everything.png` showing real LLM + real retrieval + real trace together.
+- Committed and pushed to GitHub.
