@@ -1,0 +1,25 @@
+{"question": "How does the chunker walk the AST for TypeScript files?", "expected_paths": ["lib/chunker/tree-sitter-ts.ts", "lib/chunker/index.ts"], "must_cite": true}
+{"question": "Where is the SQLite connection initialized?", "expected_paths": ["lib/db/client.ts"], "must_cite": true}
+{"question": "How is the BM25 query sanitized before hitting FTS5?", "expected_paths": ["lib/search/bm25.ts"], "must_cite": true}
+{"question": "Where is Reciprocal Rank Fusion implemented?", "expected_paths": ["lib/search/hybrid.ts"], "must_cite": true}
+{"question": "Show me the cited-answer system prompt.", "expected_paths": ["lib/llm.ts", "lib/prompt.ts"], "must_cite": true}
+{"question": "How are embeddings batched for the ingest pipeline?", "expected_paths": ["lib/embed.ts", "lib/ingest.ts"], "must_cite": true}
+{"question": "Where is the eval harness runner?", "expected_paths": ["lib/eval.ts"], "must_cite": true}
+{"question": "How does the architecture graph classify internal vs external modules?", "expected_paths": ["app/api/graph/route.ts"], "must_cite": true}
+{"question": "Where is the streaming chat API defined?", "expected_paths": ["app/api/query/route.ts"], "must_cite": true}
+{"question": "Show me the citation chip rendering in the UI.", "expected_paths": ["app/components/Chat.tsx"], "must_cite": true}
+{"question": "How does the TS chunker handle class declarations?", "expected_paths": ["lib/chunker/tree-sitter-ts.ts"], "must_cite": true}
+{"question": "What is the schema for the chunks table?", "expected_paths": ["lib/db/schema.sql"], "must_cite": true}
+{"question": "Where is the ingest pipeline CLI defined?", "expected_paths": ["scripts/ingest-cli.ts", "lib/ingest.ts"], "must_cite": true}
+{"question": "How are the eval results persisted?", "expected_paths": ["lib/eval.ts", "lib/db/schema.sql"], "must_cite": true}
+{"question": "Where do the 25 demo Q&A fixtures live?", "expected_paths": ["eval/fixtures/code-doc-assistant.eval.jsonl"], "must_cite": true}
+{"question": "How does the Python chunker handle decorated definitions?", "expected_paths": ["lib/chunker/tree-sitter-py.ts"], "must_cite": true}
+{"question": "Show me how the SQLite vec0 table is created.", "expected_paths": ["lib/db/client.ts"], "must_cite": true}
+{"question": "How does the page.tsx load the list of repos on mount?", "expected_paths": ["app/page.tsx"], "must_cite": true}
+{"question": "Where is the architecture map component?", "expected_paths": ["app/components/ArchitectureMap.tsx"], "must_cite": true}
+{"question": "How does the LLM streaming yield tokens to the client?", "expected_paths": ["lib/llm.ts", "app/api/query/route.ts"], "must_cite": true}
+{"question": "Where is the IngestForm component?", "expected_paths": ["app/components/IngestForm.tsx"], "must_cite": true}
+{"question": "How does the eval harness decide a question passed?", "expected_paths": ["lib/eval.ts"], "must_cite": true}
+{"question": "Show me the embed.ts batching logic.", "expected_paths": ["lib/embed.ts"], "must_cite": true}
+{"question": "How does the React Flow dep graph get its data?", "expected_paths": ["app/components/ArchitectureMap.tsx", "app/api/graph/route.ts"], "must_cite": true}
+{"question": "Where is the example question list in the chat empty state?", "expected_paths": ["app/components/Chat.tsx"], "must_cite": true}

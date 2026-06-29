@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+      - name: Smoke test (chunker)
+        run: |
+          cat > /tmp/test-chunker.mts <<'EOF'
+          import { chunkFile } from "./lib/chunker/index";
+          const chunks = chunkFile({ path: "test.ts", text: "export function hello() { return 1; }" });
+          if (chunks.length === 0) throw new Error("chunker produced no chunks");
+          console.log("chunker ok:", chunks.length, "chunks");
+          EOF
+          pnpm exec tsx /tmp/test-chunker.mts

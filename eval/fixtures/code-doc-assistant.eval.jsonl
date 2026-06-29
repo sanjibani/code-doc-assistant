@@ -1,0 +1,25 @@
+{"question": "How does Fresh handle server-side rendering for routes?", "expected_paths": ["src/server/render.ts", "src/server/context.ts", "src/server/types.ts"], "must_cite": true}
+{"question": "Where is the routing logic that matches URLs to handlers?", "expected_paths": ["src/server/router.ts"], "must_cite": true}
+{"question": "How does Fresh register a new route file?", "expected_paths": ["src/server/router.ts", "src/server/types.ts"], "must_cite": true}
+{"question": "Show me how middleware composes for a request.", "expected_paths": ["src/server/middleware.ts"], "must_cite": true}
+{"question": "Where is the dev server entry point?", "expected_paths": ["src/dev/commands.ts", "src/dev/run.ts", "src/dev/mod.ts"], "must_cite": true}
+{"question": "How are static files served from the public/ directory?", "expected_paths": ["src/server/static_files.ts"], "must_cite": true}
+{"question": "What JSX runtime does Fresh use for islands?", "expected_paths": ["src/runtime/jsx.ts", "src/runtime/preact_hooks.ts"], "must_cite": true}
+{"question": "How do I define an island component?", "expected_paths": ["src/runtime/preact_hooks.ts", "src/runtime/jsx.ts"], "must_cite": true}
+{"question": "Where is the build manifest generator?", "expected_paths": ["src/build/mod.ts", "src/build/esbuild.ts"], "must_cite": true}
+{"question": "How does Fresh handle Tailwind CSS at build time?", "expected_paths": ["src/build/tailwind.ts"], "must_cite": true}
+{"question": "Show me the plugin loader for fresh.config.ts.", "expected_paths": ["src/server/init_safe_deps.ts", "src/server/deps.ts"], "must_cite": true}
+{"question": "Where is the JSX renderer that runs in the browser?", "expected_paths": ["src/runtime/client.tsx", "src/runtime/entrypoints/main.ts"], "must_cite": true}
+{"question": "How does Fresh determine which files are routes vs islands vs components?", "expected_paths": ["src/server/router.ts", "src/build/mod.ts"], "must_cite": true}
+{"question": "Where are error boundaries defined?", "expected_paths": ["src/server/render.ts"], "must_cite": true}
+{"question": "Show me the request context type.", "expected_paths": ["src/server/context.ts", "src/server/types.ts"], "must_cite": true}
+{"question": "How does Fresh handle 404s?", "expected_paths": ["src/server/render.ts"], "must_cite": true}
+{"question": "Where is the handler signature defined?", "expected_paths": ["src/server/types.ts", "src/server/handlers.ts"], "must_cite": true}
+{"question": "How do I add an API route that returns JSON?", "expected_paths": ["src/server/handlers.ts", "src/server/types.ts"], "must_cite": true}
+{"question": "Where is the manifest loader at startup?", "expected_paths": ["src/server/manifest.ts"], "must_cite": true}
+{"question": "How does Fresh handle HMR for islands?", "expected_paths": ["src/dev/commands.ts"], "must_cite": true}
+{"question": "Where is the entrypoint that wires everything together?", "expected_paths": ["src/server/init_safe_deps.ts", "src/server/mod.ts"], "must_cite": true}
+{"question": "Show me how state is shared between handlers.", "expected_paths": ["src/server/context.ts", "src/server/types.ts"], "must_cite": true}
+{"question": "How does Fresh serve its own internal assets?", "expected_paths": ["src/server/init_safe_deps.ts"], "must_cite": true}
+{"question": "Where is the watcher that triggers rebuilds in dev?", "expected_paths": ["src/dev/commands.ts", "src/dev/run.ts"], "must_cite": true}
+{"question": "How does Fresh prevent double-rendering of islands?", "expected_paths": ["src/runtime/preact_hooks.ts", "src/server/render.ts"], "must_cite": true}

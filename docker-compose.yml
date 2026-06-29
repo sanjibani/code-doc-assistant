@@ -1,0 +1,33 @@
+# Production deployment on Cloudflare Pages + Workers
+#
+# This is a sketch of the production path. The README documents the
+# full migration plan (Turbopuffer / pgvector, queue worker, etc).
+# This file is the minimum you need to get the v1 app onto
+# Cloudflare's edge.
+#
+# Real production needs:
+# - Postgres + pgvector or Turbopuffer instead of sqlite-vec
+# - Cloudflare Queues for ingest jobs
+# - Cloudflare KV for embedding cache
+# - Sentry or equivalent for error tracking
+# - OAuth via the customer's IdP
+
+name: code-doc-assistant
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-https://api.minimax.io/v1}
+      MINIMAX_EMBEDDING_MODEL: ${MINIMAX_EMBEDDING_MODEL:-MiniMax-Text-01}
+      MINIMAX_LLM_MODEL: ${MINIMAX_LLM_MODEL:-MiniMax-Text-01}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+      DB_PATH: /data/code-doc.db
+    volumes:
+      - code-doc-data:/data
+
+volumes:
+  code-doc-data:
