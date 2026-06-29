@@ -11,25 +11,36 @@ type Repo = { id: string; name: string; url: string; file_count: number; chunk_c
 
 const LEFT_COLLAPSED = 280;
 const LEFT_EXPANDED = 560;
-const LS_KEY = "code-doc.leftMode";
+const RIGHT_COLLAPSED = 320;
+const RIGHT_EXPANDED = 900;
+const LS_LEFT = "code-doc.leftMode";
+const LS_RIGHT = "code-doc.rightMode";
 
 export default function HomePage() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [activeRepoId, setActiveRepoId] = useState<string | null>(null);
   const [ingesting, setIngesting] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [leftExpanded, setLeftExpanded] = useState(false);
+  const [rightExpanded, setRightExpanded] = useState(false);
 
-  // Load saved expand state on mount.
+  // Load saved expand states on mount.
   useEffect(() => {
-    setExpanded(localStorage.getItem(LS_KEY) === "1");
+    setLeftExpanded(localStorage.getItem(LS_LEFT) === "1");
+    setRightExpanded(localStorage.getItem(LS_RIGHT) === "1");
   }, []);
 
-  // Persist + drive CSS variable. Two fixed widths, no drag math.
+  // Persist + drive CSS variables.
   useEffect(() => {
-    const w = expanded ? LEFT_EXPANDED : LEFT_COLLAPSED;
-    document.documentElement.style.setProperty("--left-width", `${w}px`);
-    localStorage.setItem(LS_KEY, expanded ? "1" : "0");
-  }, [expanded]);
+    const lw = leftExpanded ? LEFT_EXPANDED : LEFT_COLLAPSED;
+    document.documentElement.style.setProperty("--left-width", `${lw}px`);
+    localStorage.setItem(LS_LEFT, leftExpanded ? "1" : "0");
+  }, [leftExpanded]);
+
+  useEffect(() => {
+    const rw = rightExpanded ? RIGHT_EXPANDED : RIGHT_COLLAPSED;
+    document.documentElement.style.setProperty("--right-width", `${rw}px`);
+    localStorage.setItem(LS_RIGHT, rightExpanded ? "1" : "0");
+  }, [rightExpanded]);
 
   useEffect(() => {
     fetch("/api/ingest")
@@ -49,10 +60,17 @@ export default function HomePage() {
         <div style={{ flex: 1 }} />
         <button
           className="toggle-panel"
-          onClick={() => setExpanded((e) => !e)}
-          title={expanded ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={() => setLeftExpanded((e) => !e)}
+          title={leftExpanded ? "Collapse sidebar" : "Expand sidebar"}
         >
-          {expanded ? "« Collapse" : "» Expand"}
+          {leftExpanded ? "« Sidebar" : "» Sidebar"}
+        </button>
+        <button
+          className="toggle-panel primary"
+          onClick={() => setRightExpanded((e) => !e)}
+          title={rightExpanded ? "Collapse architecture panel" : "Expand architecture panel"}
+        >
+          {rightExpanded ? "Architecture «" : "Architecture »"}
         </button>
         <span className="muted">
           <span className="kbd">/</span> to focus search
