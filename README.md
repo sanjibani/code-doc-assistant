@@ -60,23 +60,13 @@ The full pipeline live: real ingest trace in the left sidebar (every AST chunk w
 - Against the `code-doc-assistant-self.eval.jsonl` fixtures (this project's own files), with `EMBED_FAKE=1` (see "MiniMax embeddings rate limit" below), recall@5 came in at 16% and cite_rate at 20%. With real MiniMax embeddings the recall number would be substantially higher (fake embeddings carry no semantic meaning).
 - What this proves: the eval harness runs end-to-end, the LLM is real, citations are real, latency is bounded.
 
-## MiniMax embeddings rate limit (working around it)
+## Running the project
 
-The MiniMax embeddings endpoint (`POST /v1/embeddings`) returns HTTP `200 OK` with `{"vectors": null, "base_resp": {"status_code": 1002, "status_msg": "rate limit exceeded(RPM)"}}` once you exceed a small per-minute limit on this account. Chat completions are not affected.
+The default path uses real MiniMax embeddings. The retrieval panel, the eval harness, and the chat all wire to `lib/embed.ts` which calls the live API. A working `MINIMAX_API_KEY` and reachable MiniMax endpoint are required.
 
-Two fallbacks are wired:
+For batch size: `lib/embed.ts` sends 16 chunks per request. Empirically the MiniMax embeddings endpoint rate-limits around batch 20+; 16 is safe.
 
-1. **`EMBED_FAKE=1` env var**. When set, `lib/embed.ts` returns deterministic hash-based vectors instead of calling MiniMax. This is what produced the eval numbers above. Useful for screenshots and offline dev. **Not for production** — these vectors carry no semantic meaning.
-2. **`batchSize: 16` in `lib/embed.ts`**. The real endpoint appears to rate-limit around batch 20+. We deliberately under-run it.
-
-To run with the real embeddings API:
-```bash
-unset EMBED_FAKE
-pnpm ingest /path/to/some-repo
-pnpm eval
-```
-
-If the rate limit hits, set `EMBED_FAKE=1` and continue. The retrieval quality will be visibly lower because the fake vectors are not semantically meaningful.
+If you hit a rate limit, wait one minute, lower the batch size in `lib/embed.ts`, or swap to a different embedding provider. The two places that touch the embedding API are `embedBatched` (ingest) and `embedOne` (retrieval) — both are short.
 
 ## Architecture
 

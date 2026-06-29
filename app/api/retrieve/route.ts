@@ -30,7 +30,7 @@ function formatLines(start: number, end: number): string {
 function buildExplanation(
   bm25Top: BM25Hit | null,
   vecTop: VectorHit | null,
-  fused: FusedHitLite[],
+  fused: Array<{ path: string; symbol: string | null; rrf: number; bm25_rank: number | null; vec_rank: number | null; picked: boolean }>,
 ): { bm25_winner: string; vector_winner: string; rrf_promoted: string; dropped_for_llm: string } {
   const bm25Winner = bm25Top
     ? `${bm25Top.symbol ?? bm25Top.kind} — keyword match on tokens from the question (bm25=${bm25Top.score.toFixed(2)})`
@@ -133,7 +133,7 @@ export async function GET(req: Request) {
     const explanation = buildExplanation(
       bm25All[0] ?? null,
       vecAll[0] ?? null,
-      allFusedRows,
+      allFusedRows as FusedRow[],
     );
 
     return NextResponse.json({

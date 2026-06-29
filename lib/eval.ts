@@ -109,7 +109,7 @@ export async function runEval(opts: EvalOptions = {}): Promise<EvalSummary> {
       })) {
         acc += delta;
       }
-      cited = /\[src:\s*[\w./-]+#L\d+-L\d+\]/.test(acc);
+      cited = /\[src:\s*[^\]]+#L\d+-L\d+\]/.test(acc);
     }
 
     const row: EvalResultRow = {

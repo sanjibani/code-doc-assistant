@@ -60,8 +60,18 @@ export async function GET(req: Request) {
 }
 
 function isInternal(path: string): boolean {
-  // Heuristic: external specs don't start with "./" or "/" or "src/" etc.
-  return /^[./]/.test(path) || /^[a-zA-Z0-9_./-]+\.[a-z]{2,4}$/.test(path);
+  // Internal = starts with a path-ish prefix (./, /, contains a slash,
+  // or is clearly a relative module path). External = bare specifier
+  // like "react" or "zod" with no slash.
+  // The bare exception: a single bare file like "foo.ts" is also
+  // considered internal (likely a relative module reference). The
+  // distinguishing signal is "does it look like a package name?"
+  // Package names don't have slashes and don't have a file extension
+  // by themselves — `react` vs `react.ts` vs `./react`.
+  if (path.startsWith(".") || path.startsWith("/")) return true;
+  if (path.includes("/")) return true;
+  if (/\.[a-z]{1,5}$/i.test(path)) return true; // has file extension → file ref
+  return false; // bare name → package import
 }
 
 function shortLabel(p: string): string {

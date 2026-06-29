@@ -96,41 +96,58 @@ export async function ingestRepo(opts: IngestOptions): Promise<IngestResult> {
     detail: { filesFound: files.length },
   });
 
-  // Chunk every file.
+  // Chunk every file. Read in parallel with a concurrency cap so
+  // we don't open 1000 file handles on a large repo. SQLite writes
+  // are serialized at the end of the loop.
   const chunkInputs: Array<{ fileId: string; chunk: Chunk }> = [];
   const edges: Array<{ from_path: string; to_path: string; kind: string }> = [];
 
-  for (let i = 0; i < files.length; i++) {
-    const rel = relative(absPath, files[i]!).replace(/\\/g, "/");
-    const text = await readFile(files[i]!, "utf8");
-    const sha = sha1(text);
-    const language = languageFor(rel);
-    const bytes = Buffer.byteLength(text, "utf8");
-    const lines = text.split("\n").length;
-    const fileId = upsertFile({
-      id: nanoid(),
-      repo_id: repoId,
-      path: rel,
-      language,
-      sha,
-      bytes,
-      lines,
-    });
-    const chunks = chunkFile({ path: rel, text });
-    for (const c of chunks) {
-      chunkInputs.push({ fileId, chunk: c });
+  const CONCURRENCY = 16;
+  for (let start = 0; start < files.length; start += CONCURRENCY) {
+    const slice = files.slice(start, start + CONCURRENCY);
+    const results = await Promise.all(
+      slice.map(async (absFile) => {
+        const rel = relative(absPath, absFile).replace(/\\/g, "/");
+        const text = await readFile(absFile, "utf8");
+        const sha = sha1(text);
+        const language = languageFor(rel);
+        const bytes = Buffer.byteLength(text, "utf8");
+        const lines = text.split("\n").length;
+        const chunks = chunkFile({ path: rel, text });
+        const fileEdges: typeof edges = [];
+        collectEdges(rel, text, language, fileEdges);
+        return { rel, sha, language, bytes, lines, chunks, fileEdges };
+      }),
+    );
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j]!;
+      const fileId = upsertFile({
+        id: nanoid(),
+        repo_id: repoId,
+        path: r.rel,
+        language: r.language,
+        sha: r.sha,
+        bytes: r.bytes,
+        lines: r.lines,
+      });
+      for (const c of r.chunks) {
+        chunkInputs.push({ fileId, chunk: c });
+      }
+      for (const e of r.fileEdges) {
+        edges.push(e);
+      }
+      const done = start + j + 1;
+      opts.onProgress?.("chunking", done, files.length);
+      pushEvent(repoId, {
+        ts: new Date().toISOString(),
+        stage: "chunking",
+        msg: `${r.rel} — ${r.chunks.length} AST chunks`,
+        detail: {
+          chunks: r.chunks.length,
+          symbols: r.chunks.map((c) => c.symbol).filter((s): s is string => !!s).slice(0, 8),
+        },
+      });
     }
-    collectEdges(rel, text, language, edges);
-    opts.onProgress?.("chunking", i + 1, files.length);
-    pushEvent(repoId, {
-      ts: new Date().toISOString(),
-      stage: "chunking",
-      msg: `${rel} — ${chunks.length} AST chunks`,
-      detail: {
-        chunks: chunks.length,
-        symbols: chunks.map((c) => c.symbol).filter((s): s is string => !!s).slice(0, 8),
-      },
-    });
   }
 
   // Embed chunks in batches. Prefix with the basename so the model

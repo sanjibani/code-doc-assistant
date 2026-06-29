@@ -204,6 +204,9 @@ function AssistantText({ text }: { text: string }) {
 }
 
 function TextWithCitations({ text }: { text: string }) {
+  // Citation form: [src: <path>#L<start>-L<end>]
+  // <path> may contain spaces. We match anything that's not `]` to
+  // be permissive, then validate the structure on capture.
   const re = /\[src:\s*([^\]]+)\]/g;
   const out: Array<string | { path: string; line: string }> = [];
   let lastIdx = 0;
@@ -211,8 +214,11 @@ function TextWithCitations({ text }: { text: string }) {
   while ((m = re.exec(text))) {
     if (m.index > lastIdx) out.push(text.slice(lastIdx, m.index));
     const inside = m[1] ?? "";
-    const [path, lineRange] = inside.split("#");
-    out.push({ path: path ?? "", line: lineRange ?? "" });
+    // Split on the LAST `#` so paths with `#` in them still work.
+    const hashIdx = inside.lastIndexOf("#");
+    const path = hashIdx >= 0 ? inside.slice(0, hashIdx) : inside;
+    const line = hashIdx >= 0 ? inside.slice(hashIdx + 1) : "";
+    out.push({ path, line });
     lastIdx = m.index + m[0].length;
   }
   if (lastIdx < text.length) out.push(text.slice(lastIdx));
@@ -228,8 +234,6 @@ function TextWithCitations({ text }: { text: string }) {
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              // Click opens a new tab to the local file at line range if available.
-              // Real product would route to github.com blob URL.
               const target = `file://${p.path}#${p.line}`;
               window.open(target, "_blank");
             }}
