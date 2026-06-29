@@ -16,18 +16,30 @@ const RIGHT_MIN = 200;
 const RIGHT_MAX = 1400;
 const LS_LEFT = "code-doc.leftMode";
 const LS_RIGHT = "code-doc.rightWidth";
+// Bump this when the demo screen layout changes so existing demo
+// recordings don't show stale state. v1: chat-only.
+const DEMO_SCHEMA = 1;
 
 export default function HomePage() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [activeRepoId, setActiveRepoId] = useState<string | null>(null);
   const [ingesting, setIngesting] = useState(false);
   const [leftExpanded, setLeftExpanded] = useState(false);
-  const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
+  const [rightWidth, setRightWidth] = useState(0); // collapsed by default for the clean demo screen
   const [dragging, setDragging] = useState<"left" | "right" | null>(null);
   const dragRef = useRef<{ which: "left" | "right"; startX: number; startW: number } | null>(null);
 
-  // Load saved sizes on mount.
+  // Load saved sizes on mount. If demo schema bumped, ignore stale state.
   useEffect(() => {
+    const schema = Number(localStorage.getItem("code-doc.demoSchema") || 0);
+    if (schema < DEMO_SCHEMA) {
+      localStorage.setItem("code-doc.demoSchema", String(DEMO_SCHEMA));
+      localStorage.removeItem(LS_LEFT);
+      localStorage.removeItem(LS_RIGHT);
+      setLeftExpanded(false);
+      setRightWidth(0);
+      return;
+    }
     setLeftExpanded(localStorage.getItem(LS_LEFT) === "1");
     const rw = Number(localStorage.getItem(LS_RIGHT));
     if (Number.isFinite(rw) && rw >= 0 && rw <= RIGHT_MAX) setRightWidth(rw);
