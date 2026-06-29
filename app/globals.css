@@ -104,8 +104,20 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   grid-area: right;
   border-left: 1px solid var(--border);
   padding: 16px;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.graph-host {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
 }
 .main {
   grid-area: main;
