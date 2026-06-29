@@ -70,17 +70,40 @@ export function bm25Search(query: string, opts: { repoId?: string; k?: number } 
   return rows.map((r) => ({ ...r, score: -r.score }));
 }
 
-// Sanitize a user question into an FTS5 query string. We strip
-// punctuation that FTS5 treats as operators, escape double-quotes,
-// and add a prefix-match wildcard on the last term so partial words
-// match (e.g. "auth" -> "auth*").
+// Sanitize a user question into an FTS5 query string.
+//
+// Strategy: drop stopwords (the, a, is, do, what, how, ...), then
+// OR the remaining meaningful terms with a prefix wildcard on the
+// last one. AND'ing every word in the question is too strict — a
+// chunk is relevant if it matches the MEANINGFUL words, not the
+// filler.
+//
+// Example: "What does the ingestRepo function do?"
+//   tokens: [function, ingestrepo]
+//   query:  "function" "ingestrepo"*
+//   (one quoted term per token, last one with prefix match)
+//
+// We filter aggressively: tokens must be 3+ chars and not in the
+// stopword list. Filler words (the, a, what, how) drop out, so
+// FTS5 only matches the meaningful ones.
+const STOPWORDS = new Set([
+  "the", "and", "for", "are", "but", "not", "you", "all", "can",
+  "her", "was", "one", "our", "had", "has", "his", "how", "its",
+  "may", "did", "get", "let", "say", "she", "too", "use", "with",
+  "this", "that", "from", "have", "what", "when", "where", "which",
+  "who", "why", "would", "could", "should", "will", "shall", "may",
+  "might", "must", "does", "doing", "been", "being", "into", "than",
+  "then", "them", "they", "your", "yours", "their", "there", "here",
+  "now", "way", "many", "some", "such", "very",
+]);
 function sanitize(q: string): string {
   const tokens = q
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s_]/gu, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 1);
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
   if (tokens.length === 0) return "";
+  if (tokens.length === 1) return `"${tokens[0]!.replace(/"/g, '""')}"*`;
   const last = tokens.pop()!;
-  return [...tokens.map((t) => `"${t.replace(/"/g, '""')}"`), `"${last.replace(/"/g, '""')}"*`].join(" ");
+  return [...tokens.map((t) => `"${t.replace(/"/g, '""')}"`), `"${last.replace(/"/g, '""')}"*`].join(" OR ");
 }

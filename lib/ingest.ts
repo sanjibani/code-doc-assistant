@@ -22,8 +22,9 @@ import { extname, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 
 import { chunkFile, type Chunk } from "./chunker/index";
-import { db, ensureVecTable, EMBEDDING_DIM } from "./db/client";
+import { db, ensureVecTable, packEmbedding, EMBEDDING_DIM } from "./db/client";
 import { embedBatched } from "./embed";
+import { pushEvent } from "./ingest-progress";
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -88,6 +89,12 @@ export async function ingestRepo(opts: IngestOptions): Promise<IngestResult> {
   await walk(absPath, absPath, allFiles);
   const files = allFiles.filter((p) => SUPPORTED_EXTS.has(extname(p).toLowerCase()));
   opts.onProgress?.("walking", files.length, files.length);
+  pushEvent(repoId, {
+    ts: new Date().toISOString(),
+    stage: "walking",
+    msg: `walking ${absPath} (found ${files.length} files)`,
+    detail: { filesFound: files.length },
+  });
 
   // Chunk every file.
   const chunkInputs: Array<{ fileId: string; chunk: Chunk }> = [];
@@ -115,6 +122,15 @@ export async function ingestRepo(opts: IngestOptions): Promise<IngestResult> {
     }
     collectEdges(rel, text, language, edges);
     opts.onProgress?.("chunking", i + 1, files.length);
+    pushEvent(repoId, {
+      ts: new Date().toISOString(),
+      stage: "chunking",
+      msg: `${rel} — ${chunks.length} AST chunks`,
+      detail: {
+        chunks: chunks.length,
+        symbols: chunks.map((c) => c.symbol).filter((s): s is string => !!s).slice(0, 8),
+      },
+    });
   }
 
   // Embed chunks in batches. Prefix with the basename so the model
@@ -123,7 +139,15 @@ export async function ingestRepo(opts: IngestOptions): Promise<IngestResult> {
   const embeddings = await embedBatched(texts, {
     batchSize: 32,
     trace_id: opts.traceId,
-    onProgress: (done, total) => opts.onProgress?.("embedding", done, total),
+    onProgress: (done, total) => {
+      opts.onProgress?.("embedding", done, total);
+      pushEvent(repoId, {
+        ts: new Date().toISOString(),
+        stage: "embedding",
+        msg: `batch ${done}/${total} (${Math.min(32, total - (done - 32) > 0 ? done - (done - 32) : done)} chunks)`,
+        detail: { done, total },
+      });
+    },
   });
 
   // Insert chunks (delete-and-replace by file for idempotency).
@@ -153,10 +177,10 @@ export async function ingestRepo(opts: IngestOptions): Promise<IngestResult> {
         c.chunk.symbol,
         c.chunk.text,
         c.chunk.token_est,
-        embeddings[i]!,
+        packEmbedding(embeddings[i]!),
       );
       insertFts.run(chunkId, c.chunk.symbol, c.chunk.text);
-      insertVec.run(chunkId, embeddings[i]!);
+      insertVec.run(chunkId, packEmbedding(embeddings[i]!));
     }
     // Edges
     const insertEdge = conn.prepare(`
@@ -178,6 +202,12 @@ export async function ingestRepo(opts: IngestOptions): Promise<IngestResult> {
     result.chunk_count,
     repoId,
   );
+  pushEvent(repoId, {
+    ts: new Date().toISOString(),
+    stage: "done",
+    msg: `ingest complete: ${result.file_count} files, ${result.chunk_count} chunks, ${result.edge_count} edges`,
+    detail: { files: result.file_count, chunks: result.chunk_count, edges: result.edge_count, duration_ms: result.duration_ms },
+  });
   return result;
 }
 

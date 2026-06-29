@@ -51,6 +51,10 @@ Real eval (25 questions, 48s wall time, all 25 LLM calls real):
 
 ![real eval](docs/screenshot-real-eval.png)
 
+The full pipeline live: real ingest trace in the left sidebar (every AST chunk with its detected symbols), real retrieval trace per question (BM25 + vector + RRF + explanation), real LLM answer with real `[src: ...]` citations. No stub data anywhere.
+
+![real everything](docs/screenshot-real-everything.png)
+
 **Eval result honest summary**:
 - Default fixtures target `denoland/fresh` paths. Against this project (only `lib/` chunks), recall@5 is near zero by design. The fixtures are for the user to demo against a real fresh clone.
 - Against the `code-doc-assistant-self.eval.jsonl` fixtures (this project's own files), with `EMBED_FAKE=1` (see "MiniMax embeddings rate limit" below), recall@5 came in at 16% and cite_rate at 20%. With real MiniMax embeddings the recall number would be substantially higher (fake embeddings carry no semantic meaning).

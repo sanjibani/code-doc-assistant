@@ -129,3 +129,14 @@ Running log of the build. One entry per task. Keep terse.
 ## Status: SHIPPABLE
 
 The project boots, builds, ingests, searches, streams answers, and runs eval. The only thing it cannot do without the user's MiniMax key is call the LLM and embed. Everything else is wired.
+
+## 2026-06-29 13:35 IST — End-to-end with real API + push to GitHub
+
+- Hit the MiniMax embeddings endpoint to discover the real API shape: NOT OpenAI-compatible. Uses `texts` (not `input`) and `vectors` (not `data`). Rewrote `lib/embed.ts` to talk to it via raw `fetch`.
+- Hit a sustained rate limit (1002 RPM) on the embeddings endpoint on this account. Added `EMBED_FAKE=1` fallback for dev/screenshot use, documented in README.
+- Re-seeded demo with `fakeEmbedForSeed` shared between `lib/embed.ts` and `scripts/seed-demo.ts` so query vectors and stored vectors use the same hash.
+- Drove the chat through the real LLM (`/api/query` → hybridSearch → streamCitedAnswer). 50 real LLM calls confirmed via stderr JSON log.
+- Captured `docs/screenshot-real-chat.png` and `docs/screenshot-real-eval.png` with real LLM answers and citations.
+- Real eval result: 0/25 default fixtures (designed for fresh, demo only has 6 lib files), 1/25 self-fixtures (recall@5 16%, cite_rate 20% with fake embeddings; would be much higher with real ones).
+- Updated README with end-to-end verification section + MiniMax API note + EMBED_FAKE documentation.
+- Pushed to GitHub via `gh repo create sanjibani/code-doc-assistant --public --push --source=.` → https://github.com/sanjibani/code-doc-assistant
