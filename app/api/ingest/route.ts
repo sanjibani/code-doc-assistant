@@ -42,8 +42,12 @@ export async function POST(req: Request) {
 
 export async function GET() {
   const conn = db();
+  // Sort by chunk_count desc so populated repos surface first.
+  // Filter out zero-chunk stubs (failed ingests that left orphan rows).
   const rows = conn
-    .prepare("SELECT id, name, url, file_count, chunk_count FROM repos ORDER BY ingested_at DESC")
+    .prepare(
+      "SELECT id, name, url, file_count, chunk_count FROM repos WHERE chunk_count > 0 ORDER BY chunk_count DESC, ingested_at DESC",
+    )
     .all() as Array<{ id: string; name: string; url: string; file_count: number; chunk_count: number }>;
   return NextResponse.json({ repos: rows });
 }
