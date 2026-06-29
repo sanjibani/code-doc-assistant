@@ -35,6 +35,12 @@ const SKIP_DIRS = new Set([
   "out",
   "coverage",
   "__pycache__",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".mypy_cache",
+  ".tox",
+  ".nox",
+  ".eggs",
   ".venv",
   "venv",
   ".turbo",
@@ -47,7 +53,7 @@ const SKIP_FILES = new Set([".DS_Store", "package-lock.json", "pnpm-lock.yaml", 
 const SUPPORTED_EXTS = new Set([
   ".ts", ".tsx", ".mts", ".cts",
   ".py", ".pyi",
-  "", ".jsx", ".mjs", ".cjs", // fallback path; chunked by sliding window
+  ".js", ".jsx", ".mjs", ".cjs", // JS family: tree-sitter + sliding-window fallback
 ]);
 
 export interface IngestOptions {
@@ -306,13 +312,30 @@ async function walk(root: string, dir: string, out: string[]): Promise<void> {
 
 function languageFor(path: string): string {
   const ext = extname(path).toLowerCase();
-  if (ext === ".ts" || ext === ".mts" || ext === ".cts") return "typescript";
-  if (ext === ".tsx") return "tsx";
-  if (ext === "" || ext === ".mjs" || ext === ".cjs") return "javascript";
-  if (ext === ".jsx") return "jsx";
-  if (ext === ".py") return "python";
-  if (ext === ".pyi") return "python-stubs";
-  return "unknown";
+  // Empty extension = unknown file, NOT javascript. The previous version
+  // lumped "" with ".mjs" / ".cjs" which made every extensionless file
+  // (LICENSE, .gitignore, .editorconfig, ruff/pytest cache files) get
+  // indexed as javascript. That was a bug.
+  switch (ext) {
+    case ".ts":
+    case ".mts":
+    case ".cts":
+      return "typescript";
+    case ".tsx":
+      return "tsx";
+    case ".js":
+    case ".mjs":
+    case ".cjs":
+      return "javascript";
+    case ".jsx":
+      return "jsx";
+    case ".py":
+      return "python";
+    case ".pyi":
+      return "python-stubs";
+    default:
+      return "unknown";
+  }
 }
 
 function pathBasename(p: string): string {
