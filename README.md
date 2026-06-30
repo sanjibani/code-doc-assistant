@@ -141,15 +141,31 @@ What stays the same: schema, query logic, prompt, citation format, eval harness.
 
 ## What I would do with more time
 
-In priority order:
+In priority order. "Better" items improve quality; "Enterprise" items make it shippable.
 
-1. **Cross-encoder reranker** (Cohere, Jina, or local BGE) on top 50 RRF results, then top 8 to the LLM. Expected +10-15 points recall.
-2. **More tree-sitter grammars** (Go, Rust, Java, Ruby, C#, PHP). One file each.
-3. **Top-level arrow function detection** in the TS chunker. 20-line patch.
-4. **Incremental ingest** via chokidar file watcher. Re-chunk on change.
-5. **Eval trend UI**. Plot recall@5 and cite rate over time. Data is already in the DB.
-6. **MCP server** exposing `ask_codebase(question)` so Claude Code can query an indexed repo. Most leveraged thing on this list for an FDE role.
-7. **Voice input** via Monologue (Mac) or Apple dictation. Pipe to the chat composer.
+**Better (research / quality):**
+
+1. **Cross-encoder reranker** (Cohere Rerank, Jina, or local BGE) on top 50 RRF results, then top 8 to the LLM. Expected +10-15 points recall@5. One integration, one latency budget to add (~100ms).
+2. **More tree-sitter grammars** (Go, Rust, Java, Ruby, C#, PHP). One file each, pluggable. Opens the system to non-TS/Python codebases.
+3. **Top-level arrow function detection** in the TS chunker. Known gap. 20-line patch to `lib/chunker.ts`.
+4. **Hybrid query rewriting** — LLM rewrites the user's question into 3-4 variants ("how does auth work?" -> "authentication flow", "JWT verification", "session middleware"). Retrieve on each, fuse. Helps on vague questions.
+5. **Incremental ingest** via chokidar file watcher. Re-chunk on change without a full re-ingest.
+6. **Eval trend UI**. Plot recall@5 and cite rate over time. Data is already in the DB.
+7. **MCP server** exposing `ask_codebase(question)` so Claude Code / Cursor can query an indexed repo. Most leveraged thing on this list for an FDE role — turns the system into a primitive other agents call.
+8. **Voice input** via Monologue (Mac) or Apple dictation. Pipe to the chat composer.
+
+**Enterprise (production-ready):**
+
+9. **Storage swap** — `sqlite-vec` -> Postgres + pgvector. `chunks_fts` -> `tsvector`. Schema transfers 1:1. Same query code, different driver.
+10. **Compute split** — one process -> web tier (Cloudflare Workers) + ingest worker (separate container) + Cloudflare Queues for ingest jobs.
+11. **Cache** — Workers KV with 1h TTL on `(question_hash, repo_version)`. Most demos hit the same 10 questions in the first hour; cache hits are huge.
+12. **Auth** — OAuth via customer's IdP (Okta, Google Workspace, etc.). Per-tenant DB schema. Quarter-day work.
+13. **Multi-tenant isolation** — defense in depth. Row-level security in Postgres. `tenant_id` on every table. Every query filters by it, so even a buggy query can't leak across customers.
+14. **Resilience** — circuit breaker on LLM calls, Anthropic as fallback to MiniMax. The live version of what I had to work around today with `EMBED_FAKE=1`.
+15. **Observability** — trace IDs already land in stderr as JSON. Next step is OpenTelemetry export to Datadog / Honeycomb so you can search traces, find slow queries, see what's popular.
+16. **Cost** at 25k chunks + 1000 queries/day: cents/day for embedding (batched, indexed once), ~$5/day for LLM. Bottleneck is query fan-out, not ingest.
+
+**What stays the same across all of this:** the schema, the query logic, the prompt, the citation format, the eval harness. None of those change. Only the substrate does.
 
 ## What I cut and why
 
