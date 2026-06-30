@@ -107,20 +107,6 @@ export default function HomePage() {
         <h1>Code Doc Assistant</h1>
         <span className="badge">v0.1</span>
         <div style={{ flex: 1 }} />
-        <button
-          className="toggle-panel"
-          onClick={() => setLeftExpanded((e) => !e)}
-          title={leftExpanded ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          {leftExpanded ? "« Sidebar" : "» Sidebar"}
-        </button>
-        <button
-          className={`toggle-panel${rightCollapsed ? "" : " primary"}`}
-          onClick={toggleRight}
-          title={rightCollapsed ? "Expand architecture panel" : "Collapse architecture panel"}
-        >
-          {rightCollapsed ? "Architecture »" : "Architecture «"}
-        </button>
         <span className="muted">
           <span className="kbd">/</span> to focus search
         </span>
