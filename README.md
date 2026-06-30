@@ -19,11 +19,44 @@ Requires Node 20+, pnpm 10+, a MiniMax API key.
 
 ## What it does
 
-You point it at a repository. It walks the tree, chunks every TypeScript and Python file along AST boundaries (function, class, method, interface), embeds the chunks with MiniMax, and stores them in SQLite with a vector index (sqlite-vec) and a keyword index (FTS5). You ask questions in a chat UI. The system retrieves the top chunks via hybrid BM25 + vector search, asks the LLM to answer using only those chunks, and forces every claim to carry an inline citation like `[src: src/server/router.ts#L42-L67]`. Click a citation to open the file at the line.
+You point it at a repository, ask questions in natural language, get cited answers.
 
-The architecture map on the right renders the repo's import graph. The eval panel on the left runs a 25-question regression suite and persists every run.
+**The flow in six steps:**
+
+1. **Ingest** — you point the CLI at a folder. The system walks the tree, finds every `.ts` / `.tsx` / `.py` file, and chunks each one along AST boundaries (function, class, method, interface — not a sliding window). Each chunk carries its symbol name, start line, end line, and the file's path.
+2. **Embed** — chunks are batched 16 at a time and sent to MiniMax's `/embeddings` endpoint. Vectors land in `sqlite-vec` (so KNN is a single SQL query). The keyword side is FTS5 with BM25. Both live in the same SQLite file.
+3. **Ask** — type a question in the chat. The query vector hits `sqlite-vec` for KNN; the same query string hits FTS5 for BM25. Both run in parallel.
+4. **Fuse** — top-K from each side are merged with Reciprocal Rank Fusion (`k0=60`, parameter-free). RRF is the same algorithm Elastic, Vespa, and OpenSearch ship by default; no learned ranker, no training data.
+5. **Answer** — the top chunks are sent to MiniMax chat with a prompt that forbids inventing file paths. The streamed answer includes `[src: src/server/router.ts#L42-L67]` tags inline. Click a tag to open the file at the line.
+6. **Eval** — the sidebar's `Run eval (25 Q&A)` button scores a hand-written regression suite. Recall@5, MRR, nDCG@5, cite-rate are persisted per run.
+
+**The architecture map** on the right renders the repo's import graph (internal files vs external libs, force-directed layout). **The eval panel** on the left shows live trace per question.
 
 ![real chat](docs/screenshot-real-chat.png)
+
+## How to use it in 30 seconds
+
+```bash
+pnpm dev                            # http://localhost:3000
+```
+
+In another terminal:
+
+```bash
+pnpm ingest /path/to/some-repo     # 5 seconds for a 50-file repo
+```
+
+Open `http://localhost:3000`. Click the repo card on the left. Type a question. Watch the cited answer stream in.
+
+**Three questions to try first** (against this repo, after ingesting it):
+
+```
+how does hybrid retrieval work?
+what does the AST chunker do that a sliding window wouldn't?
+how is the cited-answer prompt structured?
+```
+
+Each returns a real answer with `[src: ...]` tags pointing to actual files in this codebase.
 
 ## Architecture
 
